@@ -1,0 +1,70 @@
+name: Docker Pipeline
+
+# Set explicit token permissions for the workflow
+permissions:
+  contents: read
+  packages: write
+
+on:
+  # Give 2 different ways to trigger the docker workflow to apply semantic versioning tags:
+  # 1. On a git tag push that starts with 'v'
+  push:
+    tags:
+      - 'v*'
+  # 2. Manually via the Actions tab
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Git tag to release (e.g., v1.2.3)
+        required: true
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # Determine which way the tag was provided
+      - name: Resolve release tag
+        id: tag
+        run: |
+          TAG_INPUT="${{ github.event.inputs.release_tag }}"
+          if [ -n "$TAG_INPUT" ]; then
+            echo "tag=$TAG_INPUT" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Please Github add 'toLowerCase' function :)
+      - name: Convert repository name into lowercase
+        run: |
+          echo "REPO=${GITHUB_REPOSITORY@L}" >> "${GITHUB_ENV}"    
+      
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          tags: ghcr.io/${{ env.REPO }}:${{ steps.tag.outputs.tag }}
+          platforms: linux/amd64
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          
+      - name: Push Docker image
+        run: |
+          docker push ghcr.io/${{ env.REPO }}:${{ steps.tag.outputs.tag }}
+      
