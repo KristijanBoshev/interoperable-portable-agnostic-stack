@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+images:
+  - name: todo-api
+    newName: ghcr.io/kristijanboshev/interoperable-portable-agnostic-stack
+    newTag: v1.0.0
+
+patches:
+  - path: service-aws.yaml
