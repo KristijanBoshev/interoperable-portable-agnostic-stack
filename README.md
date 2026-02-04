@@ -1,51 +1,148 @@
 # Interoperable Portable Agnostic Stack
 
-This repository provides a single container image and cloud-agnostic Kubernetes base manifests, with an AWS (EKS) overlay and Terraform provisioning for a production-grade cluster.
+This repository is a deployment-first stack that ships:
+- A container image build pipeline
+- Kubernetes base manifests plus AWS and on‑prem overlays
+- Terraform to provision a production-grade EKS cluster
 
-## What this delivers
-- Production-ready EKS cluster using the official Terraform EKS module.
-- VPC with private subnets and NAT gateways.
-- ECR repository for the application image.
-- Kubernetes base manifests with health checks, HPA, and PDB.
-- AWS overlay that exposes the service via an NLB.
+> The application is a demo; the focus here is on infrastructure and deployment.
 
-## Prerequisites
-- AWS account and credentials with permissions to create VPC, EKS, IAM, and ECR.
-- Terraform >= 1.5
-- kubectl
-- Docker
-- AWS CLI
+---
 
-## End-to-end workflow
-### 1) Provision EKS with Terraform
-From [infra/terraform](infra/terraform):
+## Repository layout
 
-1. Initialize and apply:
-	- `terraform init`
-	- `terraform apply`
+- **Container build**: [Dockerfile](Dockerfile)
+- **Kubernetes base**: [k8s/base](k8s/base)
+  - Deployment: [k8s/base/deployment.yaml](k8s/base/deployment.yaml)
+  - Service: [k8s/base/service.yaml](k8s/base/service.yaml)
+  - HPA: [k8s/base/hpa.yaml](k8s/base/hpa.yaml)
+  - PDB: [k8s/base/pdb.yaml](k8s/base/pdb.yaml)
+  - Namespace: [k8s/base/namespace.yaml](k8s/base/namespace.yaml)
+  - ServiceAccount: [k8s/base/serviceaccount.yaml](k8s/base/serviceaccount.yaml)
+  - Kustomization: [k8s/base/kustomization.yaml](k8s/base/kustomization.yaml)
+- **Kubernetes overlays**:
+  - AWS: [k8s/overlays/aws](k8s/overlays/aws) using [k8s/overlays/aws/kustomization.yaml](k8s/overlays/aws/kustomization.yaml)
+  - On‑prem: [k8s/overlays/onprem](k8s/overlays/onprem) using [k8s/overlays/onprem/kustomization.yaml](k8s/overlays/onprem/kustomization.yaml)
+- **GitHub Actions**: [`.github/workflows/docker.yaml`](.github/workflows/docker.yaml)
+- **Terraform (EKS + VPC)**: [infra](infra)
 
-2. Configure kubectl using the output:
-	- `aws eks update-kubeconfig --region <region> --name <cluster_name>`
+---
 
-> For production, restrict `endpoint_public_access_cidrs` in [infra/terraform/variables.tf](infra/terraform/variables.tf) to trusted IP ranges.
+## 1) Provision AWS infrastructure with Terraform
 
-### 2) Build and push the image to ECR
-1. Get the ECR repository URL from Terraform output.
-2. Build and push:
-	- `docker build -t todo-api:latest .`
-	- `aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <account_id>.dkr.ecr.<region>.amazonaws.com`
-	- `docker tag todo-api:latest <account_id>.dkr.ecr.<region>.amazonaws.com/todo-api:latest`
-	- `docker push <account_id>.dkr.ecr.<region>.amazonaws.com/todo-api:latest`
+All Terraform is under [infra](infra).
 
-### 3) Deploy to EKS
-1. Update the image in [k8s/overlays/aws/kustomization.yaml](k8s/overlays/aws/kustomization.yaml).
-2. Apply the overlay:
-	- `kubectl apply -k k8s/overlays/aws`
+1) Initialize:
 
-3. Get the external endpoint:
-	- `kubectl get svc -n todo`
+```sh
+cd infra
+terraform init 
+```
+Afterwards enter S3 details!
 
-## Production notes
-- HPA requires metrics-server. Install it in the cluster if not present.
-- For TLS and advanced routing, add AWS Load Balancer Controller and switch to an Ingress.
-- The app uses an in-memory database; for real workloads, swap to a managed database (RDS) and update the connection configuration.
+2) Review configuration:
+- Variables: [infra/variables.tf](infra/variables.tf)
+(Ideally variables should come from Secrets Managaer and not set here as default)
+
+3) Apply:
+
+```sh
+terraform apply
+```
+
+4) Configure kubectl (from outputs):
+
+```sh
+aws eks update-kubeconfig --region <region> --name <cluster_name>
+```
+
+---
+
+## 2) Build and publish the container image
+
+### Option A: GitHub Actions (recommended)
+The workflow in [`.github/workflows/docker.yaml`](.github/workflows/docker.yaml) builds and pushes to GHCR.
+
+**Trigger by tag:**
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+**Or manually** from the Actions tab with `release_tag`.
+
+### Option B: Local Docker build (for testing)
+Uses the multi‑stage build in [Dockerfile](Dockerfile):
+
+```sh
+docker build -t todo-api:local .
+```
+
+---
+
+## 3) Deploy to EKS
+
+1) Set the image/tag in [k8s/overlays/aws/kustomization.yaml](k8s/overlays/aws/kustomization.yaml).
+
+2) Apply:
+
+```sh
+kubectl apply -k k8s/overlays/aws
+```
+
+3) Get the external endpoint:
+- The AWS overlay patches the Service to `LoadBalancer` via [k8s/overlays/aws/service-aws.yaml](k8s/overlays/aws/service-aws.yaml)
+- Query:
+
+```sh
+kubectl get svc -n todo
+```
+
+---
+
+## 4) Deploy on‑prem
+
+1) Set the image/tag in [k8s/overlays/onprem/kustomization.yaml](k8s/overlays/onprem/kustomization.yaml).
+
+2) Apply:
+
+```sh
+kubectl apply -k k8s/overlays/onprem
+```
+
+3) Ensure your ingress controller is installed and matches:
+- Ingress spec: [k8s/overlays/onprem/ingress-onprem.yaml](k8s/overlays/onprem/ingress-onprem.yaml)
+- Default class: `traefik`
+- Host: `<your-domain>`
+
+---
+
+## 5) Kubernetes base behavior
+
+Defined in [k8s/base](k8s/base):
+
+- **Namespace**: `todo` via [k8s/base/namespace.yaml](k8s/base/namespace.yaml)
+- **ServiceAccount**: [k8s/base/serviceaccount.yaml](k8s/base/serviceaccount.yaml)
+- **Deployment**:
+  - Non‑root container security context
+  - Probes on `/healthz`
+  - Resource requests/limits
+  - Read‑only root filesystem
+  - Temp volume at `/tmp`
+  - See [k8s/base/deployment.yaml](k8s/base/deployment.yaml)
+- **Service**:
+  - ClusterIP by default
+  - See [k8s/base/service.yaml](k8s/base/service.yaml)
+- **HPA**:
+  - CPU‑based scaling
+  - See [k8s/base/hpa.yaml](k8s/base/hpa.yaml)
+- **PDB**:
+  - Minimum 1 pod available
+  - See [k8s/base/pdb.yaml](k8s/base/pdb.yaml)
+
+---
+
+## 6) Argo CD - GitOps
+
+Automatic deployment if you use Argo CD, the app is defined in [k8s/argocd/application.yaml](k8s/argocd/application.yaml) and you can point to your own repo and cluster.
+
