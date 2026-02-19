@@ -146,3 +146,10 @@ Defined in [k8s/base](k8s/base):
 
 Automatic deployment if you use Argo CD, the app is defined in [k8s/argocd/application.yaml](k8s/argocd/application.yaml) and you can point to your own repo and cluster.
 
+---
+
+## 7) Test deployment URL
+
+```sh
+curl https://todo.kristijanboshev.com/healthz
+```
