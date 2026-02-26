@@ -153,3 +153,18 @@ Automatic deployment if you use Argo CD, the app is defined in [k8s/argocd/appli
 ```sh
 curl https://todo.kristijanboshev.com/healthz
 ```
+
+---
+
+## 8) Conclusion: Deploying to another cloud
+
+To deploy this stack on a cloud provider other than AWS, you typically need **2 main change areas**:
+
+1) **Terraform cloud-specific modules**
+- Replace or add provider-specific infrastructure modules (cluster, networking, load balancer integrations, IAM equivalent, etc.).
+
+2) **Provider-specific Kubernetes overlay (optional but common)**
+- Keep using the same base manifests and the same `kubectl apply -k ...` flow.
+- Add or adjust only provider-specific patches (for example Service/Ingress annotations and ingress class behavior).
+
+So the deployment process stays the same with Kustomize; the main work is swapping the infrastructure layer for the target cloud and adding a small overlay if that cloud requires specific Kubernetes annotations.
